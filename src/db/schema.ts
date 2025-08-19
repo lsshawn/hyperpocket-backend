@@ -28,12 +28,20 @@ import { sql } from 'drizzle-orm';
 
 export const user = pgTable('users', {
 	id: uuid().defaultRandom().primaryKey().notNull(),
-	createdAt: CreatedAt,
-	updatedAt: UpdatedAt,
-	name: text('name'),
-	email: text('email').unique(),
-	otp: integer('otp'),
+	createdAt: timestamp('created_at').defaultNow().notNull(),
+	updatedAt: timestamp('updated_at').defaultNow().notNull(),
+	deletedAt: timestamp('deleted_at'),
+	name: text(),
+	email: text().unique(),
+  phone: text(),
+	otp: integer(),
 	otpExpiry: integer('otp_expiry'),
 	otpAttempts: integer('otp_attempts'),
 })
 
+export const wallet = pgTable('wallets', {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+})
+export const transaction = pgTable('transactions', {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+})

@@ -1,5 +1,5 @@
 import {config} from 'dotenv'
-import { drizzle } from 'drizzle-orm/neon-http';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { neon } from '@neondatabase/serverless';
 config({ path: '.env'})
 
