@@ -1,7 +1,8 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import kyc from "./modules/kyc/routes";
+import kycRoutes from "./modules/kyc/routes";
+import walletRoutes from "./modules/wallet/routes";
 
 const app = new Hono();
 
@@ -23,7 +24,8 @@ app.get("/", (c) => {
 	return c.text("Hello Hono!");
 });
 
-app.route("/kyc", kyc);
+app.route("/kyc", kycRoutes);
+app.route("/wallets", walletRoutes);
 
 serve(
 	{
