@@ -17,6 +17,7 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.2.0",
     "@types/node": "^20.11.17",
     "@types/pg": "^8.15.5",
     "dotenv": "^17.2.1",
