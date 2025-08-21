@@ -24,6 +24,16 @@ const transferSchema = z.object({
   currency: z.string().length(3, "Currency must be exactly 3 characters").regex(/^[A-Z]{3}$/, "Currency must be uppercase letters")
 });
 
+// Query validators
+const userCurrencyQuerySchema = z.object({
+  userId: z.uuidv4(),
+  currency: z
+    .string()
+    .length(3, 'Currency must be exactly 3 characters')
+    .regex(/^[A-Z]{3}$/, 'Currency must be uppercase letters')
+    .default('USD')
+});
+
 walletRoutes.post('/', zValidator('json', z.object({userId: z.string().uuidv4()})), async (c) => {
   try {
     const { userId } = c.req.valid('json');
@@ -52,16 +62,13 @@ walletRoutes.post('/account', zValidator('json', walletAccountSchema), async (c)
   }
 });
 
-walletRoutes.get('/', async (c) => {
+walletRoutes.get('/', zValidator('query', userCurrencyQuerySchema), async (c) => {
   try {
-    const userId = c.req.query('userId');
-    if (!userId) {
-      return c.json({ error: 'userId is required' }, 400);
-    }
-    const wallet = await getWalletAccount(userId, 'USD');
+    const { userId, currency } = c.req.valid('query');
+    const account = await getWalletAccount(userId, currency);
 
     const response: ApiResponse = {
-      data: wallet,
+      data: account,
       message: 'Wallet account fetched successfully',
     };
 
@@ -71,22 +78,19 @@ walletRoutes.get('/', async (c) => {
   }
 });
 
-walletRoutes.get('/deposit', async (c) => {
+walletRoutes.get('/deposit', zValidator('query', userCurrencyQuerySchema), async (c) => {
   try {
-    const userId = c.req.query('userId');
-    if (!userId) {
-      return c.json({ error: 'userId is required' }, 400);
-    }
-    const wallet = await getDeposit(userId, 'USD');
+    const { userId, currency } = c.req.valid('query');
+    const deposits = await getDeposit(userId, currency);
 
     const response: ApiResponse = {
-      data: wallet,
+      data: deposits,
       message: 'Deposits fetched successfully',
     };
 
     return c.json(response, 200);
   } catch (error: any) {
-    return c.json({ error: 'Failed to fetch wallet', details: error.message }, 500);
+    return c.json({ error: 'Failed to fetch deposits', details: error.message }, 500);
   }
 });
 
@@ -121,22 +125,19 @@ walletRoutes.post('/withdraw', zValidator('json', amountSchema), async (c) => {
   }
 });
 
-walletRoutes.get('/withdraw', async (c) => {
+walletRoutes.get('/withdraw', zValidator('query', userCurrencyQuerySchema), async (c) => {
   try {
-    const userId = c.req.query('userId');
-    if (!userId) {
-      return c.json({ error: 'userId is required' }, 400);
-    }
-    const wallet = await getWithdrawal(userId, 'USD');
+    const { userId, currency } = c.req.valid('query');
+    const withdrawals = await getWithdrawal(userId, currency);
 
     const response: ApiResponse = {
-      data: wallet,
+      data: withdrawals,
       message: 'Withdrawal fetched successfully',
     };
 
     return c.json(response, 200);
   } catch (error: any) {
-    return c.json({ error: 'Failed to fetch wallet', details: error.message }, 500);
+    return c.json({ error: 'Failed to fetch withdrawals', details: error.message }, 500);
   }
 });
 
@@ -151,6 +152,9 @@ walletRoutes.post('/transfer', zValidator('json', transferSchema), async (c) => 
     return c.json(response, 200);
   } catch (error: any) {
     if (error.message === 'Insufficient available balance') {
+      return c.json({ error: 'Transfer failed', details: error.message }, 400);
+    }
+    if (error.message === 'Cannot transfer to the same user') {
       return c.json({ error: 'Transfer failed', details: error.message }, 400);
     }
     return c.json({ error: 'Transfer failed', details: error.message }, 500);
@@ -168,10 +172,16 @@ walletRoutes.post('/deposit/validate', zValidator('json', z.object({transactionI
     };
     return c.json(response, 200);
   } catch (error: any) {
-    if (error.message === 'Insufficient available balance') {
+    const knownMessages = [
+      'Transaction not found',
+      'Only deposits can be validated',
+      'Transaction already settled or invalid state',
+    ];
+    if (knownMessages.includes(error.message)) {
       return c.json({ error: 'Validate failed', details: error.message }, 400);
     }
     return c.json({ error: 'Validate failed', details: error.message }, 500);
   }
 });
+
 export default walletRoutes;

@@ -3,61 +3,72 @@ import { nanoid } from 'nanoid';
 import { db } from '../../db/index.js';
 import { transaction, wallet, walletAccount, transfer } from '../../db/schema.js';
 
-/**
- * Retrieves or creates a wallet account for a given user and currency.
- * @param userId - The ID of the user.
- * @param currency - The currency code (e.g., 'USD').
- * @returns The user's wallet account.
- * @throws If the user's main wallet is not found.
- */
-export async function getWalletAccount(userId: string, currency: string) {
-  let userWallet = await db.query.wallet.findFirst({
-    where: eq(wallet.userId, userId),
-  });
+// Helpers
+function normalizeCurrency(currency: string): string {
+  return currency.trim().toUpperCase();
+}
 
+async function getOrCreateWalletTx(tx: any, userId: string) {
+  await tx
+    .insert(wallet)
+    .values({ userId })
+    .onConflictDoNothing({ target: wallet.userId });
+
+  const userWallet = await tx.query.wallet.findFirst({ where: eq(wallet.userId, userId) });
   if (!userWallet) {
-    // For this example, we assume the user and wallet must exist.
-    // throw new Error('Wallet not found for user');
-    // Just create wallet if not exist
-    await createWallet(userId)
-    userWallet = await db.query.wallet.findFirst({
-      where: eq(wallet.userId, userId),
-    });
+    throw new Error('Failed to create wallet');
   }
+  return userWallet;
+}
 
-  let account = await db.query.walletAccount.findFirst({
-    where: and(eq(walletAccount.walletId, userWallet!.id), eq(walletAccount.currency, currency)),
+async function getOrCreateWalletAccountTx(tx: any, userId: string, currency: string) {
+  const normalizedCurrency = normalizeCurrency(currency);
+  const userWallet = await getOrCreateWalletTx(tx, userId);
+
+  await tx
+    .insert(walletAccount)
+    .values({
+      walletId: userWallet.id,
+      currency: normalizedCurrency,
+      balance: '0',
+      availableBalance: '0',
+    })
+    .onConflictDoNothing({ target: [walletAccount.walletId, walletAccount.currency] });
+
+  const account = await tx.query.walletAccount.findFirst({
+    where: and(eq(walletAccount.walletId, userWallet.id), eq(walletAccount.currency, normalizedCurrency)),
   });
-
   if (!account) {
-    // If the user doesn't have an account for this currency, create one.
-    [account] = await db
-      .insert(walletAccount)
-      .values({
-        walletId: userWallet!.id,
-        currency: currency,
-        balance: '0',
-        availableBalance: '0',
-      })
-      .returning();
+    throw new Error('Failed to create wallet account');
   }
-
   return account;
+}
+
+export async function getWalletAccount(userId: string, currency: string) {
+  const normalizedCurrency = normalizeCurrency(currency);
+  return db.transaction(async (tx) => {
+    const account = await getOrCreateWalletAccountTx(tx, userId, normalizedCurrency);
+    return account;
+  });
 }
 
 export async function createWallet(userId: string){
   return db.insert(wallet).values({userId}).returning();
 }
+  
 
 export async function createWalletAccount(walletId: string, currency: string){
+  const normalizedCurrency = normalizeCurrency(currency);
   return db
       .insert(walletAccount)
       .values({
         walletId: walletId,
-        currency: currency,
+        currency: normalizedCurrency,
         balance: '0',
         availableBalance: '0',
-      }).returning();
+      })
+      .onConflictDoNothing({ target: [walletAccount.walletId, walletAccount.currency] })
+      .returning();
 }
 
 export async function getDeposit(userId: string, currency: string) {
@@ -71,7 +82,7 @@ export async function getDeposit(userId: string, currency: string) {
   }
 
   let account = await db.query.walletAccount.findFirst({
-    where: and(eq(walletAccount.walletId, userWallet.id), eq(walletAccount.currency, currency)),
+    where: and(eq(walletAccount.walletId, userWallet.id), eq(walletAccount.currency, normalizeCurrency(currency))),
   });
 
   if (account) {
@@ -83,6 +94,7 @@ export async function getDeposit(userId: string, currency: string) {
     });
     return deposits;
   }
+  return [];
 }
 
 export async function getWithdrawal(userId: string, currency: string) {
@@ -96,7 +108,7 @@ export async function getWithdrawal(userId: string, currency: string) {
   }
 
   let account = await db.query.walletAccount.findFirst({
-    where: and(eq(walletAccount.walletId, userWallet.id), eq(walletAccount.currency, currency)),
+    where: and(eq(walletAccount.walletId, userWallet.id), eq(walletAccount.currency, normalizeCurrency(currency))),
   });
 
   if (account) {
@@ -108,6 +120,7 @@ export async function getWithdrawal(userId: string, currency: string) {
     });
     return withdrawal;
   }
+  return [];
 }
 
 export async function deposit(userId: string, amount: number, currency: string) {
@@ -116,7 +129,7 @@ export async function deposit(userId: string, amount: number, currency: string) 
   }
 
   return db.transaction(async (tx) => {
-    const account = await getWalletAccount(userId, currency);
+    const account = await getOrCreateWalletAccountTx(tx, userId, currency);
 
     const grossAmount = amount.toString();
     const fee = '0'; // Assuming no fee for deposit
@@ -130,7 +143,7 @@ export async function deposit(userId: string, amount: number, currency: string) 
         type: 'deposit',
         status: 'pending', // Funds are not available until settled
         direction: 'credit',
-        currency: currency,
+        currency: normalizeCurrency(currency),
         grossAmount,
         fee,
         netAmount,
@@ -157,16 +170,24 @@ export async function withdraw(userId: string, amount: number, currency: string)
   }
 
   return db.transaction(async (tx) => {
-    const account = await getWalletAccount(userId, currency);
-
-    // Check for sufficient available balance
-    if (Number(account.availableBalance) < amount) {
-      throw new Error('Insufficient available balance');
-    }
+    const account = await getOrCreateWalletAccountTx(tx, userId, currency);
 
     const grossAmount = amount.toString();
     const fee = '0'; // Assuming no withdrawal fee for now
     const netAmount = grossAmount;
+
+    const updated = await tx
+      .update(walletAccount)
+      .set({
+        balance: sql`${walletAccount.balance} - ${grossAmount}`,
+        availableBalance: sql`${walletAccount.availableBalance} - ${grossAmount}`,
+      })
+      .where(and(eq(walletAccount.id, account.id), sql`${walletAccount.availableBalance} >= ${grossAmount}`))
+      .returning();
+
+    if (updated.length === 0) {
+      throw new Error('Insufficient available balance');
+    }
 
     const [newTransaction] = await tx
       .insert(transaction)
@@ -175,22 +196,14 @@ export async function withdraw(userId: string, amount: number, currency: string)
         type: 'withdrawal',
         status: 'completed', //
         direction: 'debit',
-        currency: currency,
+        currency: normalizeCurrency(currency),
         grossAmount,
         fee,
         netAmount,
-        description: `Withdrawal of ${grossAmount} ${currency}`,
+        description: `Withdrawal of ${grossAmount} ${normalizeCurrency(currency)}`,
         reference: `WDR-${nanoid()}`,
       })
       .returning();
-
-    await tx
-      .update(walletAccount)
-      .set({
-        balance: sql`${walletAccount.balance} - ${grossAmount}`,
-				availableBalance: sql`${walletAccount.availableBalance} - ${grossAmount}`
-      })
-      .where(eq(walletAccount.id, account.id));
 
     return newTransaction;
   });
@@ -200,19 +213,40 @@ export async function transferFunds(from: string, to: string, amount: number, cu
   if (amount <= 0) {
     throw new Error('Transfer amount must be positive');
   }
+  if (from === to) {
+    throw new Error('Cannot transfer to the same user');
+  }
 
   return db.transaction(async (tx) => {
-    const fromAccount = await getWalletAccount(from, currency);
-    const toAccount = await getWalletAccount(to, currency);
+    const fromAccount = await getOrCreateWalletAccountTx(tx, from, currency);
+    const toAccount = await getOrCreateWalletAccountTx(tx, to, currency);
     
-    // Check for sufficient available balance
-    if (Number(fromAccount.availableBalance) < amount) {
-      throw new Error('Insufficient available balance');
-    }
-
     const grossAmount = amount.toString();
     const fee = '0'; // Assuming no withdrawal fee for now
     const netAmount = grossAmount;
+    const normalizedCurrency = normalizeCurrency(currency);
+
+    // Debit source account atomically if sufficient funds
+    const debited = await tx
+      .update(walletAccount)
+      .set({
+        availableBalance: sql`${walletAccount.availableBalance} - ${grossAmount}`,
+        balance: sql`${walletAccount.balance} - ${grossAmount}`,
+      })
+      .where(and(eq(walletAccount.id, fromAccount.id), sql`${walletAccount.availableBalance} >= ${grossAmount}`))
+      .returning();
+    if (debited.length === 0) {
+      throw new Error('Insufficient available balance');
+    }
+
+    // Credit destination account
+    await tx
+      .update(walletAccount)
+      .set({
+        availableBalance: sql`${walletAccount.availableBalance} + ${grossAmount}`,
+        balance: sql`${walletAccount.balance} + ${grossAmount}`,
+      })
+      .where(eq(walletAccount.id, toAccount.id));
 
     const [newTransfer] = await tx
       .insert(transfer)
@@ -232,7 +266,8 @@ export async function transferFunds(from: string, to: string, amount: number, cu
         fee,
         netAmount,
         transferId: newTransfer.id,
-        description: `Transfer of ${grossAmount} ${currency}`,
+        currency: normalizedCurrency,
+        description: `Transfer of ${grossAmount} ${normalizedCurrency}`,
         reference: `TRF-${nanoid()}`,
       })
       .returning();
@@ -248,26 +283,11 @@ export async function transferFunds(from: string, to: string, amount: number, cu
         fee,
         netAmount,
         transferId: newTransfer.id,
-        description: `Transfer of ${grossAmount} ${currency}`,
+        currency: normalizedCurrency,
+        description: `Transfer of ${grossAmount} ${normalizedCurrency}`,
         reference: `TRF-${nanoid()}`,
       })
       .returning();
-
-    await tx
-      .update(walletAccount)
-      .set({
-        availableBalance: sql`${walletAccount.availableBalance} - ${grossAmount}`,
-        balance: sql`${walletAccount.balance} - ${grossAmount}`,
-      })
-      .where(eq(walletAccount.id, fromAccount.id));
-
-    await tx
-      .update(walletAccount)
-      .set({
-        availableBalance: sql`${walletAccount.availableBalance} + ${grossAmount}`,
-        balance: sql`${walletAccount.balance} + ${grossAmount}`,
-      })
-      .where(eq(walletAccount.id, toAccount.id));
 
     return {fromAccountTransaction, toAccountTransaction}
   });
@@ -276,15 +296,20 @@ export async function transferFunds(from: string, to: string, amount: number, cu
 // Dev only
 export async function validateDeposit(transactionId: string) {
   return db.transaction(async (tx) => {
-    const [newTransaction] = await tx.update(transaction).set({
+    const trx = await tx.query.transaction.findFirst({ where: eq(transaction.id, transactionId) });
+    if (!trx) throw new Error('Transaction not found');
+    if (trx.type !== 'deposit') throw new Error('Only deposits can be validated');
+    if (trx.status !== 'pending') throw new Error('Transaction already settled or invalid state');
+
+    const [updatedTransaction] = await tx.update(transaction).set({
       status: "completed",
       settledAt: new Date()
-    }).where(eq(transaction.id, transactionId)).returning()
+    }).where(eq(transaction.id, transactionId)).returning();
 
     await tx.update(walletAccount).set({
-      availableBalance: sql`${walletAccount.availableBalance} + ${newTransaction.netAmount}`,
-    })
+      availableBalance: sql`${walletAccount.availableBalance} + ${updatedTransaction.netAmount}`,
+    }).where(eq(walletAccount.id, updatedTransaction.walletAccountId));
 
-    return newTransaction
+    return updatedTransaction
   })
 }
