@@ -22,7 +22,8 @@ import {
 	primaryKey,
 	pgView,
 	pgSequence,
-	pgEnum
+	pgEnum,
+	char
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -35,6 +36,7 @@ export const transactionStatusEnum = pgEnum('transaction_status', [
 	'cancelled',
 	'reversed'
 ]);
+export const transactionDirectionEnum = pgEnum('transaction_direction', ['credit', 'debit']);
 
 export const user = pgTable('users', {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -85,34 +87,61 @@ export const walletAccount = pgTable(
 	}
 );
 
+export const transfer = pgTable('transfer', {
+  id: uuid().defaultRandom().primaryKey().notNull(),
+  reference: text('reference').unique().notNull(), // idempotency
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
 export const transaction = pgTable(
-	'transactions',
-	{
-		id: uuid().defaultRandom().primaryKey().notNull(),
-		walletAccountId: uuid('wallet_account_id')
-			.notNull()
-			.references(() => walletAccount.id, { onDelete: 'restrict' }),
-		type: transactionTypeEnum('type').notNull(),
-		status: transactionStatusEnum('status').default('pending').notNull(),
-		// grossAmount is the total transaction amount. All amounts are positive. The direction is implied by the type.
-		grossAmount: numeric('gross_amount', { precision: 19, scale: 4 }).notNull(),
-		// fee is the portion of grossAmount charged by the platform.
-		fee: numeric('fee', { precision: 19, scale: 4 }).default('0').notNull(),
-		// netAmount is the amount credited to the recipient.
-		netAmount: numeric('net_amount', { precision: 19, scale: 4 }).notNull(),
-		description: text('description'),
-		metadata: jsonb('metadata'), // e.g. { "paymentGateway": "stripe", "chargeId": "ch_123...", "recipientBank": "...", "recipientAccount": "..." }
-		createdAt: timestamp('created_at').defaultNow().notNull(),
-		updatedAt: timestamp('updated_at').defaultNow().notNull(),
-		settledAt: timestamp('settled_at'),
-		reference: text('reference').unique() // For idempotency and external references
-	},
-	table => {
-		return {
-			amountCheck: check(
-				'amount_check',
-				sql`${table.grossAmount} >= 0 and ${table.fee} >= 0 and ${table.netAmount} >= 0 and ${table.grossAmount} = ${table.netAmount} + ${table.fee}`
-			)
-		};
-	}
+  'transactions',
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+
+    // Wallet account
+    walletAccountId: uuid('wallet_account_id')
+      .notNull()
+      .references(() => walletAccount.id, { onDelete: 'restrict' }),
+
+    // Business info
+    type: transactionTypeEnum('type').notNull(),
+    direction: transactionDirectionEnum('direction').notNull(),
+    status: transactionStatusEnum('status').default('pending').notNull(),
+
+    // Amounts
+    grossAmount: numeric('gross_amount', { precision: 19, scale: 4 }).notNull(),
+    fee: numeric('fee', { precision: 19, scale: 4 }).default('0').notNull(),
+    netAmount: numeric('net_amount', { precision: 19, scale: 4 }).notNull(),
+
+    currency: char('currency', { length: 3 }).default('USD').notNull(),
+
+    // Optional references
+    transferId: uuid('transfer_id'), // FK to transfers table
+    reversalOf: uuid('reversal_of'), // self-reference
+
+    description: text('description'),
+    metadata: jsonb('metadata'),
+    createdBy: uuid('created_by'),
+
+    // Timestamps
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+    settledAt: timestamp('settled_at'),
+
+    reference: text('reference').unique(),
+  },
+  (table) => {
+    return {
+      // Ensure positive amounts and gross = net + fee
+      amountCheck: check(
+        'amount_check',
+        sql`${table.grossAmount} >= 0 AND ${table.fee} >= 0 AND ${table.netAmount} >= 0 AND ${table.grossAmount} = ${table.netAmount} + ${table.fee}`
+      ),
+
+      // Indexes
+      idxWalletDate: index('idx_wallet_date').on(table.walletAccountId, table.createdAt),
+      idxReference: index('idx_reference').on(table.reference),
+      idxTransfer: index('idx_transfer').on(table.transferId),
+    };
+  }
 );

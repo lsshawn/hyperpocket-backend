@@ -1,8 +1,8 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import kycRoutes from "./modules/kyc/routes";
-import walletRoutes from "./modules/wallet/routes";
+import kycRoutes from "./modules/kyc/routes.js";
+import walletRoutes from "./modules/wallet/routes.js";
 
 const app = new Hono();
 

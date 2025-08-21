@@ -1,11 +1,9 @@
-import {config} from 'dotenv'
+import 'dotenv/config';
+import * as schema from './schema.js';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { neon } from '@neondatabase/serverless';
-config({ path: '.env'})
 
-if (!DATABASE_URL) throw new Error('db/index.ts: DATABASE_URL is not set');
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL is not defined');
+}
 
-const client = neon(DATABASE_URL);
-
-export const db = drizzle(client);
-
+export const db = drizzle(process.env.DATABASE_URL, { schema });
