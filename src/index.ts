@@ -9,7 +9,12 @@ const app = new Hono();
 app.use(
 	"/*",
 	cors({
-		origin: ["*"],
+		origin: [
+			"http://localhost:3000",
+			"http://localhost:5173",
+			"https://hyperpocket.com",
+			"https://aipaygo.com",
+		],
 		allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
 		exposeHeaders: ["Content-Type", "Authorization"],
 		credentials: true,
