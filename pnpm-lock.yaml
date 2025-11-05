@@ -17,6 +17,9 @@ importers:
       '@neondatabase/serverless':
         specifier: ^1.0.1
         version: 1.0.1
+      braintree:
+        specifier: ^3.34.0
+        version: 3.34.0
       hono:
         specifier: ^4.9.2
         version: 4.9.2
@@ -33,6 +36,9 @@ importers:
       '@biomejs/biome':
         specifier: 2.2.0
         version: 2.2.0
+      '@types/braintree':
+        specifier: ^3.4.1
+        version: 3.4.1
       '@types/node':
         specifier: ^20.11.17
         version: 20.19.11
@@ -109,6 +115,9 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [win32]
+
+  '@braintree/wrap-promise@2.1.0':
+    resolution: {integrity: sha512-UIrJB+AfKU0CCfbMoWrsGpd2D/hBpY/SGgFI6WRHPOwhaZ3g9rz1weiJ6eb6L9KgVyunT7s2tckcPkbHw+NzeA==}
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
@@ -425,6 +434,9 @@ packages:
     resolution: {integrity: sha512-O6yC5TT0jbw86VZVkmnzCZJB0hfxBl0JJz6f+3KHoZabjb/X08r9eFA+vuY06z1/qaovykvdkrXYq3SPUuvogA==}
     engines: {node: '>=19.0.0'}
 
+  '@types/braintree@3.4.1':
+    resolution: {integrity: sha512-y4foO6zutZAKjXcKMxCsUQ4jS6tdWdFkCpSB8yTQt/Gq9M4cBD2je7a6QWeqtIORNCANwXv/DSHHL+lToAn8eg==}
+
   '@types/node@20.19.11':
     resolution: {integrity: sha512-uug3FEEGv0r+jrecvUUpbY8lLisvIjg6AAic6a2bSP5OEOLeJsDSnvhCDov7ipFFMXS3orMpzlmi0ZcuGkBbow==}
 
@@ -434,8 +446,15 @@ packages:
   '@types/pg@8.15.5':
     resolution: {integrity: sha512-LF7lF6zWEKxuT3/OR8wAZGzkg4ENGXFNyiV/JeOt9z5B+0ZVwbql9McqX5c/WStFq1GaGso7H1AzP/qSzmlCKQ==}
 
+  braintree@3.34.0:
+    resolution: {integrity: sha512-PCNJ7OwvxJqxiDYE6sQxVjs1/ycI49e6Ch/4NTOfKHyS+aVNKwT5ha8kBI6HpEYBDgCbgAuJS5EZWfDCzCsVtg==}
+    engines: {node: '>=10.0', npm: '>=6'}
+
   buffer-from@1.1.2:
     resolution: {integrity: sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==}
+
+  dateformat@4.5.1:
+    resolution: {integrity: sha512-OD0TZ+B7yP7ZgpJf5K2DIbj3FZvFvxgFUuaqA/V5zTjAtAAXZ1E8bktHxmAGs4x5b7PflqA9LeQ84Og7wYtF7Q==}
 
   debug@4.4.1:
     resolution: {integrity: sha512-KcKCqiftBJcZr++7ykoDIEwSa3XWowTfNPo92BYxjXiyYEVrUQh2aLyhxBCwww+heortUFxEJYcRzosstTEBYQ==}
@@ -634,6 +653,9 @@ packages:
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
 
+  sax@1.4.3:
+    resolution: {integrity: sha512-yqYn1JhPczigF94DMS+shiDMjDowYO6y9+wB/4WgO0Y19jWYk0lQ4tuG5KI7kj4FTp1wxPj5IFfcrz/s1c3jjQ==}
+
   source-map-support@0.5.21:
     resolution: {integrity: sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==}
 
@@ -657,6 +679,14 @@ packages:
 
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+
+  xml2js@0.5.0:
+    resolution: {integrity: sha512-drPFnkQJik/O+uPKpqSgr22mpuFHqKdbS835iAQrUC73L2F5WkboIRd63ai/2Yg6I1jzifPFKH2NTK+cfglkIA==}
+    engines: {node: '>=4.0.0'}
+
+  xmlbuilder@11.0.1:
+    resolution: {integrity: sha512-fDlsI/kFEx7gLvbecc0/ohLG50fugQp8ryHzMTuW9vSa1GJ0XYWKnhsUx7oie3G98+r56aTQIUB4kht42R3JvA==}
+    engines: {node: '>=4.0'}
 
   xtend@4.0.2:
     resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
@@ -701,6 +731,8 @@ snapshots:
 
   '@biomejs/cli-win32-x64@2.2.0':
     optional: true
+
+  '@braintree/wrap-promise@2.1.0': {}
 
   '@drizzle-team/brocli@0.10.2': {}
 
@@ -872,6 +904,10 @@ snapshots:
       '@types/node': 22.17.2
       '@types/pg': 8.15.5
 
+  '@types/braintree@3.4.1':
+    dependencies:
+      '@types/node': 20.19.11
+
   '@types/node@20.19.11':
     dependencies:
       undici-types: 6.21.0
@@ -886,7 +922,15 @@ snapshots:
       pg-protocol: 1.10.3
       pg-types: 2.2.0
 
+  braintree@3.34.0:
+    dependencies:
+      '@braintree/wrap-promise': 2.1.0
+      dateformat: 4.5.1
+      xml2js: 0.5.0
+
   buffer-from@1.1.2: {}
+
+  dateformat@4.5.1: {}
 
   debug@4.4.1:
     dependencies:
@@ -1030,6 +1074,8 @@ snapshots:
 
   resolve-pkg-maps@1.0.0: {}
 
+  sax@1.4.3: {}
+
   source-map-support@0.5.21:
     dependencies:
       buffer-from: 1.1.2
@@ -1049,6 +1095,13 @@ snapshots:
   typescript@5.9.2: {}
 
   undici-types@6.21.0: {}
+
+  xml2js@0.5.0:
+    dependencies:
+      sax: 1.4.3
+      xmlbuilder: 11.0.1
+
+  xmlbuilder@11.0.1: {}
 
   xtend@4.0.2: {}
 
