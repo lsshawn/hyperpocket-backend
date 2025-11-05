@@ -29,10 +29,26 @@ A **Wallet Microservice** implementing financial ledger logic for multi-product 
 - ✅ **GET /wallets/withdraw** - Get withdrawal history
 - ✅ **POST /wallets/deposit/validate** - Simulate settlement (dev only)
 
-#### Admin Dashboard
+#### Admin Dashboard (🔒 Requires Authentication)
 - ✅ **GET /admin/transactions** - List all transactions with filtering & pagination
 - ✅ **GET /admin/fees/summary** - Aggregated fee totals by type/currency/processor
 - ✅ **GET /admin/fees/processor-breakdown** - Compare processor costs and efficiency
+
+#### Invoice System (🔒 Requires Authentication)
+- ✅ **POST /invoices** - Create new invoice with line items
+- ✅ **GET /invoices** - Get all invoices (admin)
+- ✅ **GET /invoices/user** - Get invoices for specific user
+- ✅ **GET /invoices/:id** - Get invoice by ID
+- ✅ **POST /invoices/pay** - Mark invoice as paid (auto-debit wallet)
+- ✅ **POST /invoices/:id/cancel** - Cancel invoice
+- ✅ Weekly invoice generation helper (CRON-ready)
+- ✅ Overdue invoice tracking
+
+#### Authentication & Security
+- ✅ **API Key Authentication** - Bearer token for admin/invoice routes
+- ✅ Protected admin routes - All `/admin/*` endpoints require auth
+- ✅ Protected invoice routes - All `/invoices/*` endpoints require auth
+- ✅ Environment variable: `ADMIN_API_KEY`
 
 #### Multi-Product Support
 - ✅ SOA fields in transactions: `productType`, `sourceEntityType`, `sourceEntityId`, `platformRef`
@@ -42,10 +58,7 @@ A **Wallet Microservice** implementing financial ledger logic for multi-product 
 
 ### ⚠️ Not Yet Implemented
 
-- ❌ **Invoice system** - Weekly invoicing CRON job for platform fees
-- ❌ **Invoice table schema** - Database table for tracking invoices
-- ❌ **Invoice-based debits** - Automatic debit of wallet accounts to clear invoices
-- ❌ **Authentication middleware** - Admin routes are currently unprotected
+- ❌ **CRON Scheduler** - Needs external setup for weekly invoice generation
 - ❌ **Webhooks for Stripe/Adyen** - Currently only Braintree webhooks implemented
 
 ---
@@ -144,10 +157,52 @@ Content-Type: application/json
 | Step | Initiator | API Call/System Action | Wallet DB Action |
 | :--- | :--- | :--- | :--- |
 | **1. Booking Complete** | Core App (Booking) | **No API Call.** Host receives cash. Core App records `paymentMethod='cash'`. | **No Transaction.** |
-| **2. Weekly Invoicing** | Wallet Service (CRON) | **Internal:** Creates `invoice` entity linked to fee-owing bookings. | **Invoice Table:** New row for platform fees due. ⚠️ **Not yet implemented** |
-| **3. Debit Host** | Wallet Service (CRON) | **Internal:** Finds Host's `walletAccount` and executes internal debit via `POST /wallets/withdraw` | **Transaction:** `type='fee'`, `direction='debit'`, `status='completed'` |
+| **2. Weekly Invoicing** | Wallet Service (CRON) | `POST /invoices` (Called by CRON job)<br/>Body: `userId`, `currency`, `periodStart`, `periodEnd`, `dueDate`, `lineItems` | **Invoice Table:** New row for platform fees due. |
+| **3. Debit Host** | Wallet Service (Admin) | `POST /invoices/pay`<br/>Body: `invoiceId`, `debitFromWallet: true` | **Transaction:** `type='fee'`, `direction='debit'`, `status='completed'`<br/>**Invoice Update:** `status='paid'`, `paidAt` set |
 
-⚠️ **Note**: The invoice system (table, CRON job, invoice-based debits) is not yet implemented. Currently, you can manually debit wallet accounts using the withdraw endpoint.
+✅ **Status**: Invoice system fully implemented! You can:
+- Create invoices via API
+- Mark as paid with automatic wallet debit
+- Track overdue invoices
+- Use `generateWeeklyInvoicesForFees()` helper in CRON jobs
+
+**Example Invoice Creation:**
+```bash
+POST /invoices
+Authorization: Bearer YOUR_ADMIN_API_KEY
+Content-Type: application/json
+
+{
+  "userId": "host-user-uuid",
+  "currency": "USD",
+  "productType": "car_rental",
+  "periodStart": "2024-01-01T00:00:00Z",
+  "periodEnd": "2024-01-07T23:59:59Z",
+  "dueDate": "2024-01-14T23:59:59Z",
+  "lineItems": [
+    {
+      "description": "Platform fee (15%) for 10 bookings",
+      "quantity": 1,
+      "unitPrice": 75.00,
+      "sourceEntityType": "rental_booking",
+      "sourceEntityId": "booking-uuid"
+    }
+  ],
+  "description": "Weekly platform fees for Jan 1-7, 2024"
+}
+```
+
+**Example Payment (Auto-Debit Wallet):**
+```bash
+POST /invoices/pay
+Authorization: Bearer YOUR_ADMIN_API_KEY
+Content-Type: application/json
+
+{
+  "invoiceId": "invoice-uuid",
+  "debitFromWallet": true
+}
+```
 
 ---
 
@@ -321,7 +376,74 @@ Transfer funds from one user to another within the same currency.
 
 ---
 
-## 7. Admin Dashboard for Business Teams
+## 7. Authentication for Admin & Invoice APIs
+
+All admin and invoice endpoints require authentication using API key-based authentication.
+
+### Setup
+
+1. **Set Admin API Key** in your `.env`:
+```bash
+ADMIN_API_KEY=your-secure-random-key-here
+```
+
+Generate a secure key:
+```bash
+# Using openssl
+openssl rand -base64 32
+
+# Or using Node.js
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+2. **Include Authorization Header** in all requests to protected endpoints:
+```bash
+Authorization: Bearer YOUR_ADMIN_API_KEY
+```
+
+### Protected Endpoints
+
+All endpoints under these paths require authentication:
+- `/admin/*` - Admin dashboard and analytics
+- `/invoices/*` - Invoice management
+
+### Example Authenticated Request
+
+```bash
+curl -X GET "http://localhost:3000/admin/transactions?page=1&limit=50" \
+  -H "Authorization: Bearer your-secure-random-key-here" \
+  -H "Content-Type: application/json"
+```
+
+### Error Responses
+
+**Missing Authorization Header (401):**
+```json
+{
+  "error": "Unauthorized",
+  "message": "Missing Authorization header"
+}
+```
+
+**Invalid API Key (403):**
+```json
+{
+  "error": "Unauthorized",
+  "message": "Invalid API key"
+}
+```
+
+### Security Best Practices
+
+1. **Never commit** your `ADMIN_API_KEY` to version control
+2. **Use different keys** for development and production
+3. **Rotate keys** periodically
+4. **Use HTTPS** in production to encrypt API key transmission
+5. **Restrict access** to environment variables containing the key
+
+---
+
+## 8. Admin Dashboard for Business Teams
 
 ### Transaction Monitoring
 
@@ -447,7 +569,162 @@ Get detailed breakdown of fees by payment processor to compare costs.
 
 ---
 
-## 8. Fee Configuration
+## 9. Invoice System for Platform Fees
+
+The invoice system enables periodic billing for platform fees (Scenario B). All invoice endpoints require authentication.
+
+### Create Invoice
+
+**Endpoint:** `POST /invoices`
+**Auth:** Required (Bearer token)
+
+Create a new invoice for platform fees with line items.
+
+**Request:**
+```json
+{
+  "userId": "host-user-uuid",
+  "currency": "USD",
+  "productType": "car_rental",
+  "periodStart": "2024-01-01T00:00:00Z",
+  "periodEnd": "2024-01-07T23:59:59Z",
+  "dueDate": "2024-01-14T23:59:59Z",
+  "lineItems": [
+    {
+      "description": "Platform fee (15%) for 10 bookings",
+      "quantity": 1,
+      "unitPrice": 75.00,
+      "sourceEntityType": "rental_booking",
+      "sourceEntityId": "booking-uuid"
+    }
+  ],
+  "description": "Weekly platform fees for Jan 1-7, 2024"
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "id": "invoice-uuid",
+    "invoiceNumber": "INV-2024-abc123",
+    "userId": "host-user-uuid",
+    "subtotal": "75.0000",
+    "taxAmount": "0.0000",
+    "totalAmount": "75.0000",
+    "currency": "USD",
+    "status": "pending",
+    "dueDate": "2024-01-14T23:59:59Z",
+    "lineItems": [
+      {
+        "id": "line-item-uuid",
+        "description": "Platform fee (15%) for 10 bookings",
+        "quantity": "1.0000",
+        "unitPrice": "75.0000",
+        "amount": "75.0000"
+      }
+    ]
+  }
+}
+```
+
+### Get All Invoices (Admin)
+
+**Endpoint:** `GET /invoices`
+**Auth:** Required
+
+**Query Parameters:**
+- `status` (enum, optional): draft, pending, paid, cancelled, overdue
+- `productType` (enum, optional): ride_hailing, car_rental, delivery
+- `startDate` (date, optional): Filter from date
+- `endDate` (date, optional): Filter to date
+- `page` (number, default: 1): Page number
+- `limit` (number, default: 50): Items per page
+
+### Get User Invoices
+
+**Endpoint:** `GET /invoices/user`
+**Auth:** Required
+
+**Query Parameters:**
+- `userId` (UUID, required): User ID
+- `status` (enum, optional): Filter by status
+- `page` (number, default: 1): Page number
+- `limit` (number, default: 50): Items per page
+
+### Mark Invoice as Paid
+
+**Endpoint:** `POST /invoices/pay`
+**Auth:** Required
+
+Mark invoice as paid and automatically debit user's wallet.
+
+**Request:**
+```json
+{
+  "invoiceId": "invoice-uuid",
+  "debitFromWallet": true
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "id": "invoice-uuid",
+    "invoiceNumber": "INV-2024-abc123",
+    "status": "paid",
+    "paidAt": "2024-01-08T10:30:00Z",
+    "paymentTransactionId": "transaction-uuid"
+  },
+  "message": "Invoice marked as paid successfully"
+}
+```
+
+**Features:**
+- Automatically debits user's wallet
+- Creates fee transaction record
+- Checks available balance before debiting
+- Atomic operation (all succeeds or all fails)
+
+### Cancel Invoice
+
+**Endpoint:** `POST /invoices/:id/cancel`
+**Auth:** Required
+
+Cancel a pending invoice.
+
+### CRON Job Integration
+
+For weekly invoice generation, use the `generateWeeklyInvoicesForFees()` helper function:
+
+```typescript
+import { generateWeeklyInvoicesForFees } from './modules/invoice/services.js';
+
+// In your CRON job (runs weekly)
+const invoices = await generateWeeklyInvoicesForFees({
+  periodStart: new Date('2024-01-01'),
+  periodEnd: new Date('2024-01-07'),
+  dueDate: new Date('2024-01-14'),
+  feePercentage: 0.15, // 15% platform fee
+  productType: 'car_rental'
+});
+
+console.log(`Created ${invoices.length} invoices`);
+```
+
+**CRON Schedule Examples:**
+```bash
+# Weekly on Monday at 1 AM
+0 1 * * 1 node scripts/generate-weekly-invoices.js
+
+# Daily check for overdue invoices at 2 AM
+0 2 * * * node scripts/mark-overdue-invoices.js
+```
+
+---
+
+## 10. Fee Configuration
 
 The wallet service tracks two types of fees:
 
@@ -476,7 +753,7 @@ See `FEE-CONFIGURATION-GUIDE.md` for comprehensive documentation on:
 
 ---
 
-## 9. Additional Documentation
+## 11. Additional Documentation
 
 - **CLAUDE.md** - Complete architecture guide for developers
 - **FEE-CONFIGURATION-GUIDE.md** - Comprehensive fee configuration strategy
@@ -484,7 +761,7 @@ See `FEE-CONFIGURATION-GUIDE.md` for comprehensive documentation on:
 
 ---
 
-## 10. Development Commands
+## 12. Development Commands
 
 ```bash
 # Development (hot reload)
@@ -508,11 +785,14 @@ biome check --write  # Fix automatically
 
 ---
 
-## 11. Environment Variables
+## 13. Environment Variables
 
 Required in `.env`:
 ```bash
 DATABASE_URL=postgresql://user:password@localhost:5432/hyperpocket
+
+# Admin API Authentication
+ADMIN_API_KEY=your-secure-random-key-here  # Required for /admin/* and /invoices/* routes
 
 # Braintree Payment Gateway
 BRAINTREE_MERCHANT_ID=your_merchant_id
@@ -525,6 +805,13 @@ BRAINTREE_MERCHANT_ACCOUNT_USD=
 BRAINTREE_MERCHANT_ACCOUNT_THB=
 BRAINTREE_MERCHANT_ACCOUNT_MYR=
 BRAINTREE_MERCHANT_ACCOUNT_SGD=
+```
+
+**Generate a secure ADMIN_API_KEY:**
+```bash
+openssl rand -base64 32
+# OR
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
 ---
