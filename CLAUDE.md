@@ -239,6 +239,201 @@ Required in `.env`:
 - Development endpoint: `POST /wallets/deposit/validate` simulates settlement (mark as production-only in future)
 - Health check: `GET /health` returns `{ status: "ok" }`
 
+## Admin API Endpoints
+
+Admin endpoints for transaction monitoring, fee analysis, and system management.
+
+**Authentication**: Admin routes should be protected with authentication middleware (TODO: implement).
+
+### Transaction Management
+
+#### `GET /admin/transactions`
+List all transactions with filtering and pagination.
+
+**Query Parameters:**
+- `page` (number, default: 1): Page number
+- `limit` (number, default: 50, max: 100): Items per page
+- `userId` (UUID, optional): Filter by user
+- `type` (enum, optional): Filter by type (deposit, withdrawal, transfer, payment, fee, refund)
+- `currency` (string, optional): Filter by currency (3-letter code)
+- `processor` (enum, optional): Filter by processor (braintree, stripe, adyen, razorpay)
+- `startDate` (date, optional): Filter from date
+- `endDate` (date, optional): Filter to date
+
+**Response:**
+```json
+{
+  "data": {
+    "transactions": [
+      {
+        "id": "uuid",
+        "type": "deposit",
+        "direction": "credit",
+        "status": "completed",
+        "grossAmount": "100.0000",
+        "fee": "3.2000",
+        "netAmount": "96.8000",
+        "currency": "USD",
+        "processor": "braintree",
+        "processorTransactionId": "abc123",
+        "description": "Card deposit",
+        "reference": "DEP-xyz",
+        "createdAt": "2024-01-01T00:00:00Z",
+        "settledAt": "2024-01-03T00:00:00Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 50,
+      "total": 1234,
+      "totalPages": 25
+    }
+  }
+}
+```
+
+### Fee Analytics
+
+#### `GET /admin/fees/summary`
+Get aggregated fee totals and breakdown by transaction type.
+
+**Query Parameters:**
+- `currency` (string, optional): Filter by currency
+- `startDate` (date, optional): Filter from date
+- `endDate` (date, optional): Filter to date
+- `processor` (enum, optional): Filter by processor
+
+**Response:**
+```json
+{
+  "data": {
+    "summary": [
+      {
+        "type": "deposit",
+        "currency": "USD",
+        "processor": "braintree",
+        "totalGrossAmount": "50000.0000",
+        "totalFees": "1450.0000",
+        "totalNetAmount": "48550.0000",
+        "transactionCount": 250
+      }
+    ],
+    "totals": {
+      "totalGrossAmount": "50000.0000",
+      "totalProcessorFees": "1450.0000",
+      "totalNetAmount": "48550.0000",
+      "transactionCount": 250
+    }
+  }
+}
+```
+
+**Use case**: Calculate total fees paid to payment processors and compare with transaction volume to determine profitability.
+
+#### `GET /admin/fees/processor-breakdown`
+Get detailed breakdown of fees by payment processor.
+
+**Query Parameters:**
+- `startDate` (date, optional): Filter from date
+- `endDate` (date, optional): Filter to date
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "processor": "braintree",
+      "currency": "USD",
+      "totalTransactions": 250,
+      "totalVolume": "50000.0000",
+      "totalFeesPaid": "1450.0000",
+      "avgFeePercentage": "2.9000"
+    },
+    {
+      "processor": "stripe",
+      "currency": "THB",
+      "totalTransactions": 180,
+      "totalVolume": "900000.0000",
+      "totalFeesPaid": "30600.0000",
+      "avgFeePercentage": "3.4000"
+    }
+  ]
+}
+```
+
+**Use case**: Compare processor efficiency and costs across different regions and currencies to optimize routing decisions.
+
+## Fee Configuration Strategy
+
+The wallet service tracks two types of fees:
+
+1. **Processor Fees** (in `transaction.fee` field): Fees charged by payment processors (Braintree, Stripe, etc.). This is our cost.
+2. **Platform Fees** (future enhancement): Fees charged to users for using the service. This is our revenue.
+
+**Current Implementation**:
+- Processor fees are calculated and stored in the `fee` field
+- Currently using an absorb model: we pay processor fees, users deposit full amount
+- Example: User deposits $100 → Processor charges $3 → User receives $97 in wallet
+
+**Recommended Configuration Approach**: Hybrid App-Level + User-Level
+
+See `FEE-CONFIGURATION-GUIDE.md` for comprehensive documentation on:
+- Fee models (absorb, pass-through, markup)
+- Configuration hierarchy (global → product → user tier → individual)
+- Database schema for fee configuration
+- Fee calculation logic
+- Best practices and examples
+
+**Quick Start:**
+1. Begin with global (app-level) fee configuration for simplicity
+2. Add user-level overrides for VIP/enterprise customers
+3. Store configuration in database for runtime changes
+4. Use Admin API to monitor fee performance
+
+**Key Metrics to Track:**
+- Total processor fees paid (cost)
+- Total platform fees collected (revenue)
+- Net fee income (revenue - cost)
+- Fee revenue by product/currency
+- Average fee percentage
+
+## Wallet Deposit API
+
+### `POST /wallets/deposit/payment`
+Deposit funds into wallet using external payment methods.
+
+**Supports:**
+- 💳 Credit card deposits via Braintree/Stripe/Adyen/Razorpay
+- 🏦 Bank transfer (processor-agnostic)
+- 💰 Internal wallet transfers
+- 🌍 Multi-currency (USD, THB, MYR, SGD, EUR, GBP, etc.)
+
+**Request Body:**
+```json
+{
+  "userId": "user-uuid",
+  "amount": 100.00,
+  "currency": "THB",
+  "paymentMethod": "credit_card",
+  "paymentMethodNonce": "nonce_from_braintree_dropin",
+  "country": "TH",
+  "idempotencyKey": "unique-request-id",
+  "processorType": "braintree",
+  "productType": "ride_hailing",
+  "sourceEntityType": "ride_request",
+  "sourceEntityId": "booking-uuid",
+  "description": "Top up wallet for ride"
+}
+```
+
+**Features:**
+- Automatic processor selection based on country/currency
+- Idempotency support for safe retries
+- Fee calculation and tracking
+- Pending status until settlement (T+2 pattern)
+- Platform reference tracking for audit trails
+- SOA field integration for multi-product tracking
+
 ## Planned API Endpoints (Not Yet Implemented)
 
 The following endpoints need to be implemented to support the SOA integration scenarios:

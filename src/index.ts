@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import adminRoutes from "./modules/admin/routes.js";
 import kycRoutes from "./modules/kyc/routes.js";
 import { ProcessorFactory } from "./modules/payment/processors/factory.js";
 import paymentRoutes from "./modules/payment/routes.js";
@@ -35,6 +36,7 @@ app.get("/", (c) => {
 	return c.text("Hello Hono!");
 });
 
+app.route("/admin", adminRoutes);
 app.route("/kyc", kycRoutes);
 app.route("/wallets", walletRoutes);
 app.route("/payments", paymentRoutes);
