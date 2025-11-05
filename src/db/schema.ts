@@ -175,6 +175,10 @@ export const transaction = pgTable(
 		sourceEntityId: uuid("source_entity_id"), // UUID from originating product's DB
 		platformRef: text("platform_ref").unique(), // globally unique reference for audit
 
+		// Payment processor tracking
+		processor: paymentProcessorEnum("processor"), // Which processor handled this transaction
+		processorTransactionId: text("processor_transaction_id"), // Transaction ID from processor
+
 		description: text("description"),
 		metadata: jsonb("metadata"),
 		createdBy: uuid("created_by"),

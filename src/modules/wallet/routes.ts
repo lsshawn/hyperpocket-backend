@@ -6,6 +6,7 @@ import {
 	createWallet,
 	createWalletAccount,
 	deposit,
+	depositWithPayment,
 	getDeposit,
 	getWalletAccount,
 	getWithdrawal,
@@ -155,6 +156,52 @@ walletRoutes.post("/deposit", zValidator("json", amountSchema), async (c) => {
 		return c.json({ error: "Deposit failed", details: error.message }, 500);
 	}
 });
+
+// Deposit with payment processor integration
+const depositWithPaymentSchema = z.object({
+	userId: z.string().uuid(),
+	amount: z.number().positive("Amount must be positive"),
+	currency: z
+		.string()
+		.length(3, "Currency must be exactly 3 characters")
+		.regex(/^[A-Z]{3}$/, "Currency must be uppercase letters"),
+	paymentMethod: z.enum(["credit_card", "bank_transfer", "wallet"]),
+	paymentMethodNonce: z.string().optional(),
+	idempotencyKey: z.string().optional(),
+	country: z.string().length(2).optional(),
+	processorType: z.enum(["braintree", "stripe", "adyen", "razorpay"]).optional(),
+	productType: z.string().optional(),
+	sourceEntityType: z.string().optional(),
+	sourceEntityId: z.string().uuid().optional(),
+	description: z.string().optional(),
+});
+
+walletRoutes.post(
+	"/deposit/payment",
+	zValidator("json", depositWithPaymentSchema),
+	async (c) => {
+		try {
+			const params = c.req.valid("json");
+			const newTransaction = await depositWithPayment(params);
+			const response: ApiResponse = {
+				data: newTransaction,
+				message:
+					"Deposit processed successfully. Funds will be available after settlement.",
+			};
+			return c.json(response, 201);
+		} catch (error: any) {
+			if (
+				error.message === "Payment method nonce is required for external payments"
+			) {
+				return c.json(
+					{ error: "Deposit failed", details: error.message },
+					400,
+				);
+			}
+			return c.json({ error: "Deposit failed", details: error.message }, 500);
+		}
+	},
+);
 
 walletRoutes.post("/withdraw", zValidator("json", amountSchema), async (c) => {
 	try {

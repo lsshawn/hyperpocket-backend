@@ -7,6 +7,11 @@ import {
 	wallet,
 	walletAccount,
 } from "../../db/schema.js";
+import {
+	ProcessorFactory,
+	selectProcessor,
+} from "../payment/processors/factory.js";
+import type { ProcessorType } from "../payment/processors/base.js";
 
 // Helpers
 function normalizeCurrency(currency: string): string {
@@ -184,6 +189,145 @@ export async function deposit(
 			.returning();
 
 		// 2. Update the ledger balance (but not the available balance)
+		await tx
+			.update(walletAccount)
+			.set({
+				balance: sql`${walletAccount.balance} + ${netAmount}`,
+			})
+			.where(eq(walletAccount.id, account.id));
+
+		return newTransaction;
+	});
+}
+
+/**
+ * Deposit funds into wallet using payment processor
+ * Supports credit card, bank transfer, and other payment methods
+ */
+export async function depositWithPayment(params: {
+	userId: string;
+	amount: number;
+	currency: string;
+	paymentMethod: "credit_card" | "bank_transfer" | "wallet";
+	paymentMethodNonce?: string; // Required for credit_card
+	idempotencyKey?: string;
+	country?: string;
+	processorType?: ProcessorType;
+	productType?: string;
+	sourceEntityType?: string;
+	sourceEntityId?: string;
+	description?: string;
+}) {
+	const {
+		userId,
+		amount,
+		currency,
+		paymentMethod,
+		paymentMethodNonce,
+		idempotencyKey,
+		country,
+		processorType,
+		productType,
+		sourceEntityType,
+		sourceEntityId,
+		description,
+	} = params;
+
+	if (amount <= 0) {
+		throw new Error("Deposit amount must be positive");
+	}
+
+	// Check for duplicate using idempotency key
+	if (idempotencyKey) {
+		const existing = await db.query.transaction.findFirst({
+			where: eq(transaction.reference, idempotencyKey),
+		});
+		if (existing) {
+			return existing;
+		}
+	}
+
+	const normalizedCurrency = normalizeCurrency(currency);
+	let processorTransactionId: string | undefined;
+	let selectedProcessor: ProcessorType | undefined;
+	let fee = "0";
+
+	// Handle external payment methods (credit card, bank transfer)
+	if (paymentMethod === "credit_card" || paymentMethod === "bank_transfer") {
+		if (!paymentMethodNonce) {
+			throw new Error("Payment method nonce is required for external payments");
+		}
+
+		// Select processor based on country/currency or use override
+		selectedProcessor =
+			processorType || selectProcessor({ country, currency: normalizedCurrency });
+		const processor = ProcessorFactory.getProcessor(selectedProcessor);
+
+		// Charge immediately for wallet deposits
+		const result = await processor.charge({
+			amount,
+			currency: normalizedCurrency,
+			paymentMethodToken: paymentMethodNonce,
+			description:
+				description || `Wallet deposit: ${amount} ${normalizedCurrency}`,
+			metadata: {
+				userId,
+				productType,
+				sourceEntityType,
+				sourceEntityId,
+			},
+		});
+
+		processorTransactionId = result.processorTransactionId;
+
+		// Calculate processor fee (simplified - in production, get from processor)
+		// For now, assume 2.9% + $0.30 for credit cards
+		if (paymentMethod === "credit_card") {
+			const feeAmount = amount * 0.029 + 0.3;
+			fee = Math.max(0, feeAmount).toFixed(4);
+		}
+	}
+
+	// Create transaction and update wallet in atomic operation
+	return db.transaction(async (tx) => {
+		const account = await getOrCreateWalletAccountTx(
+			tx,
+			userId,
+			normalizedCurrency,
+		);
+
+		const grossAmount = amount.toString();
+		const netAmount = (amount - Number.parseFloat(fee)).toFixed(4);
+
+		// Generate unique reference using idempotency key or new nanoid
+		const reference = idempotencyKey || `DEP-${nanoid()}`;
+
+		// Create deposit transaction
+		const [newTransaction] = await tx
+			.insert(transaction)
+			.values({
+				walletAccountId: account.id,
+				type: "deposit",
+				status: paymentMethod === "credit_card" ? "pending" : "pending", // All deposits start as pending
+				direction: "credit",
+				currency: normalizedCurrency,
+				grossAmount,
+				fee,
+				netAmount,
+				description:
+					description ||
+					`${paymentMethod === "credit_card" ? "Card" : paymentMethod === "bank_transfer" ? "Bank" : "Wallet"} deposit of ${grossAmount} ${normalizedCurrency}`,
+				reference,
+				processor: selectedProcessor,
+				processorTransactionId,
+				productType: productType as any,
+				sourceEntityType,
+				sourceEntityId,
+				platformRef: `WDEP-${nanoid()}`, // Globally unique platform reference
+			})
+			.returning();
+
+		// Update wallet balance (but not availableBalance - wait for settlement)
 		await tx
 			.update(walletAccount)
 			.set({
