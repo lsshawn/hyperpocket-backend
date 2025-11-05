@@ -151,9 +151,11 @@ export async function authorizePayment(params: {
 		}
 
 		// Authorize with Braintree
+		const normalizedCurrency = normalizeCurrency(currency);
 		const result = await gateway.transaction.sale({
 			amount: amount.toString(),
 			paymentMethodNonce,
+			currencyIsoCode: normalizedCurrency, // CRITICAL: Pass currency to Braintree
 			options: {
 				submitForSettlement: false, // Authorization only
 			},
@@ -397,9 +399,11 @@ export async function chargePayment(params: {
 		}
 
 		// Charge with Braintree (authorize + capture)
+		const normalizedCurrency = normalizeCurrency(currency);
 		const result = await gateway.transaction.sale({
 			amount: amount.toString(),
 			paymentMethodNonce,
+			currencyIsoCode: normalizedCurrency, // CRITICAL: Pass currency to Braintree
 			options: {
 				submitForSettlement: true, // Immediate capture
 			},
