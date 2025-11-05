@@ -6,6 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hyperpocket Backend is a **Wallet Microservice** implementing financial ledger logic for multi-product platforms (ride-hailing, rentals, deliveries, etc.). Built with Hono, TypeScript, Drizzle ORM, and PostgreSQL.
 
+## Service-Oriented Architecture (SOA)
+
+This is a **microservice** positioned as the **Single Source of Truth** for all monetary logic across multiple products.
+
+### Architectural Boundaries
+
+| Component | Responsibility | Interaction |
+| :--- | :--- | :--- |
+| **Core App (Ride/Rental/Delivery)** | Bookings, Vehicle management, Driver dispatch, User authentication | Initiates requests (e.g., "Charge Customer," "Pay Host") to the Wallet API. **Does NOT access the Wallet DB.** |
+| **Wallet Service (This Repo)** | Balances, Financial Transactions, Payment Gateways, Payouts, Invoicing, Settlements | Exposes a secure REST API to Core Apps. Uses **non-blocking asynchronous processing** for money movement. |
+
+### Key Integration Principles
+
+1. **User ID Consistency**: The `user.id` (UUID) must be globally consistent across both the Core App's `users` table and the Wallet Service's `wallet` and `transactions` tables.
+
+2. **Decoupling via UUIDs**: All links from Core App entities (like `bookings`) to Wallet entities (like `transactions`, `payments`) must use **non-foreign key UUIDs** (e.g., `depositTransactionId: uuid('...')` in the `bookings` table) managed by the Wallet Service.
+
+3. **API-Only Access**: External applications **MUST** interact with the wallet only through REST API endpoints. Direct database access is prohibited.
+
+4. **Idempotency**: All charge and credit operations must accept a unique request key (e.g., `bookingId`) to ensure idempotent operations.
+
 ## Development Commands
 
 ```bash
@@ -141,12 +162,49 @@ return db.transaction(async (tx) => {
 
 ## Multi-Product Support
 
-When integrating with multiple products (ride-hailing, rentals, etc.), the README suggests adding to the `transactions` table:
+### Mandatory Schema Enhancements
 
-- `product_type`: pgEnum for the business line
-- `source_entity_type`: table name from originating product
-- `source_entity_id`: UUID of the entity (e.g., booking ID)
-- `platform_ref`: globally unique reference for audit logs
+To support multiple products sharing the same Wallet Service, the following fields **MUST** be added to the `transactions` table:
+
+| Column Name | Data Type & Example | Rationale |
+| :--- | :--- | :--- |
+| **`product_type`** | `pgEnum('ride_hailing', 'rental', 'delivery')` | Identifies the top-level business context for accounting and filtering. |
+| **`source_entity_type`** | `text` (e.g., 'rental_booking', 'food_order') | Identifies the table in the originating product's database. |
+| **`source_entity_id`** | `uuid` | The foreign key (UUID) of the entity in the originating product's database (e.g., `bookings.id` from the Core App). |
+| **`platform_ref`** | `text` or `uuid` (Unique Index) | A system-generated, globally unique reference for all high-value events for support and audit logs. |
+
+**Implementation Note**: When adding these fields, update the `transaction` table schema in `src/db/schema.ts` and run `pnpm db:push` to apply changes.
+
+## API Integration Scenarios
+
+### Scenario A: Credit Card Upfront Payment + Deposit Pre-Auth
+
+**Objective**: Capture rental price immediately (T+2 settlement) and place a hold for the security deposit.
+
+| Step | Initiator | API Call to Wallet Service | Wallet DB Action (`transactions` table) |
+| :--- | :--- | :--- | :--- |
+| **1. Charge Rental** | Core App (Booking) | `POST /payments/capture`<br>Body: `userId`, `amount`, `paymentMethodId`, `bookingId` | **Txn 1 (Rental):** `type='payment'`, `direction='credit'`, `status='completed'`, `netAmount=$97`, `settledAt=T+2` |
+| **2. Pre-Authorize Deposit** | Core App (Booking) | `POST /payments/preauthorize`<br>Body: `userId`, `amount`, `paymentMethodId`, `bookingId` | **Txn 2 (Deposit Hold):** `type='deposit'`, `direction='credit'`, `status='pending'`, `netAmount=$50` |
+| **3. Booking Complete** | Core App (Checkout) | `POST /payments/release`<br>Body: `transactionId: Txn 2 ID` | **Txn 2 Update:** `status='cancelled'` |
+| **3B. OR Claim Damage** | Core App (Checkout) | `POST /payments/capturePartial`<br>Body: `transactionId: Txn 2 ID`, `claimAmount: $20` | **Txn 3 (Claim):** `type='payment'`, `direction='credit'`, `status='completed'`, `netAmount=$20`, `settledAt=T+2` (Updates original Txn 2 based on gateway response). |
+
+### Scenario B: Cash/Bank Transfer to Host + Weekly Settlement
+
+**Objective**: Platform receives no money upfront. Invoice Host weekly for the platform fee, then debit their Wallet Account to clear the invoice.
+
+| Step | Initiator | API Call/System Action | Wallet DB Action (`transactions` table) |
+| :--- | :--- | :--- | :--- |
+| **1. Booking Complete** | Core App (Booking) | **No API Call.** Host receives cash. Core App records `paymentMethod='cash'`. | **No Transaction.** |
+| **2. Weekly Invoicing** | Wallet Service (CRON) | **Internal:** Creates `invoice` entity linked to fee-owing bookings. | **Invoice Table:** New row for platform fees due. |
+| **3. Debit Host** | Wallet Service (CRON) | **Internal:** Finds Host's `walletAccount` and executes an internal transfer/debit. | **Txn 4 (Fee Debit):** `type='fee'`, `direction='debit'`, `status='completed'`, `netAmount=$50` (Total fees owed). |
+
+### Wallet Balance Retrieval
+
+Any Core App component (e.g., a dashboard, a driver app) needing a balance check must use a dedicated API endpoint:
+
+| Action | Initiator | API Call to Wallet Service | Core App Display |
+| :--- | :--- | :--- | :--- |
+| **Get Host Balance** | Core App (Driver UI) | `GET /wallets/accounts/{userId}` | **Available Balance:** Sum of `availableBalance` from all currency accounts. |
 
 ## Database Schema Notes
 
@@ -181,9 +239,21 @@ Required in `.env`:
 - Development endpoint: `POST /wallets/deposit/validate` simulates settlement (mark as production-only in future)
 - Health check: `GET /health` returns `{ status: "ok" }`
 
-## Future Enhancements (from README)
+## Planned API Endpoints (Not Yet Implemented)
 
-- Payment gateway integrations (Stripe pre-auth, captures, releases)
-- Invoice table for periodic fee billing
+The following endpoints need to be implemented to support the SOA integration scenarios:
+
+### Payment Gateway Endpoints
+- `POST /payments/capture` - Capture payment immediately (for upfront rental payments)
+- `POST /payments/preauthorize` - Place a hold on funds (for security deposits)
+- `POST /payments/release` - Release a held authorization without capturing
+- `POST /payments/capturePartial` - Capture a portion of a held authorization (for damage claims)
+
+### Invoicing Endpoints
+- Internal CRON job for weekly invoice generation
+- Internal service to debit wallet accounts for outstanding invoices
+
+### Additional Features
 - Authentication middleware (referenced in `kyc/routes.ts`)
-- Support for partial captures (damage claims, etc.)
+- Invoice table schema for periodic fee billing
+- Stripe/payment gateway integration for pre-auth, captures, and releases
