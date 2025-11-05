@@ -71,6 +71,12 @@ export const authorizationStatusEnum = pgEnum("authorization_status", [
 	"settled",
 	"partially_captured",
 ]);
+export const paymentProcessorEnum = pgEnum("payment_processor", [
+	"braintree",
+	"stripe",
+	"adyen",
+	"razorpay",
+]);
 
 export const user = pgTable("users", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -208,9 +214,10 @@ export const paymentAuthorization = pgTable(
 		id: uuid().defaultRandom().primaryKey().notNull(),
 
 		// Gateway info
-		gatewayTransactionId: text("gateway_transaction_id").unique().notNull(), // Braintree transaction ID
+		gatewayTransactionId: text("gateway_transaction_id").unique().notNull(), // Processor transaction ID
 		gatewayAuthorizationId: text("gateway_authorization_id"), // For auth-only transactions
 		paymentMethod: paymentMethodEnum("payment_method").notNull(),
+		processor: paymentProcessorEnum("processor").default("braintree").notNull(), // Which processor handled this
 
 		// User and amounts
 		userId: uuid("user_id")
@@ -277,7 +284,7 @@ export const refund = pgTable(
 		id: uuid().defaultRandom().primaryKey().notNull(),
 
 		// Gateway and transaction references
-		gatewayRefundId: text("gateway_refund_id").unique().notNull(), // Braintree refund ID
+		gatewayRefundId: text("gateway_refund_id").unique().notNull(), // Processor refund ID
 		originalGatewayTransactionId: text(
 			"original_gateway_transaction_id",
 		).notNull(),
@@ -289,6 +296,7 @@ export const refund = pgTable(
 			() => transaction.id,
 			{ onDelete: "restrict" },
 		),
+		processor: paymentProcessorEnum("processor").default("braintree").notNull(), // Which processor handled this refund
 
 		// Amounts
 		refundAmount: numeric("refund_amount", {
