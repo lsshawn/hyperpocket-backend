@@ -2,6 +2,9 @@ import { z } from "zod";
 
 const envSchema = z.object({
 	DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+	// Admin API authentication
+	ADMIN_API_KEY: z.string().optional(), // Optional for development, required for production
+	// Braintree Payment Gateway
 	BRAINTREE_MERCHANT_ID: z.string().min(1, "BRAINTREE_MERCHANT_ID is required"),
 	BRAINTREE_PUBLIC_KEY: z.string().min(1, "BRAINTREE_PUBLIC_KEY is required"),
 	BRAINTREE_PRIVATE_KEY: z.string().min(1, "BRAINTREE_PRIVATE_KEY is required"),
@@ -26,6 +29,7 @@ function validateEnv() {
 export const env = validateEnv();
 
 export const config = {
+	adminApiKey: env.ADMIN_API_KEY,
 	apiSettings: {
 		paginationLimit: 100,
 	},

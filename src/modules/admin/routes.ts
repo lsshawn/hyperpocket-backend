@@ -1,6 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import { adminAuth } from "../../middleware/auth.js";
 import type { ApiResponse } from "../../types.js";
 import {
 	getFeeSummary,
@@ -10,8 +11,8 @@ import {
 
 const adminRoutes = new Hono();
 
-// TODO: Add authentication middleware
-// adminRoutes.use('*', authMiddleware)
+// Apply admin authentication to all routes
+adminRoutes.use("/*", adminAuth);
 
 // Query schema for transaction list
 const transactionListQuerySchema = z.object({

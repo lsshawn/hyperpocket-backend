@@ -77,6 +77,13 @@ export const paymentProcessorEnum = pgEnum("payment_processor", [
 	"adyen",
 	"razorpay",
 ]);
+export const invoiceStatusEnum = pgEnum("invoice_status", [
+	"draft",
+	"pending",
+	"paid",
+	"cancelled",
+	"overdue",
+]);
 
 export const user = pgTable("users", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -337,6 +344,99 @@ export const refund = pgTable(
 			idxSourceEntity: index("idx_refund_source_entity").on(
 				table.sourceEntityId,
 			),
+		};
+	},
+);
+
+// Invoice table (for periodic billing of platform fees)
+export const invoice = pgTable(
+	"invoices",
+	{
+		id: uuid().defaultRandom().primaryKey().notNull(),
+
+		// Invoice details
+		invoiceNumber: text("invoice_number").unique().notNull(), // e.g., "INV-2024-001"
+		userId: uuid("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "restrict" }),
+
+		// Amounts
+		subtotal: numeric("subtotal", { precision: 19, scale: 4 }).notNull(), // Sum of line items
+		taxAmount: numeric("tax_amount", { precision: 19, scale: 4 }).default("0").notNull(),
+		totalAmount: numeric("total_amount", { precision: 19, scale: 4 }).notNull(),
+		currency: char("currency", { length: 3 }).default("USD").notNull(),
+
+		// Status and lifecycle
+		status: invoiceStatusEnum("status").default("pending").notNull(),
+		dueDate: timestamp("due_date").notNull(),
+		paidAt: timestamp("paid_at"),
+
+		// Payment tracking
+		paymentTransactionId: uuid("payment_transaction_id").references(
+			() => transaction.id,
+			{ onDelete: "restrict" },
+		), // Transaction that paid this invoice
+
+		// Multi-product SOA fields
+		productType: productTypeEnum("product_type"), // ride_hailing, car_rental, delivery
+
+		// Period this invoice covers
+		periodStart: timestamp("period_start").notNull(),
+		periodEnd: timestamp("period_end").notNull(),
+
+		// Metadata
+		description: text("description"),
+		notes: text("notes"),
+		metadata: jsonb("metadata"),
+
+		// Timestamps
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+		updatedAt: timestamp("updated_at").defaultNow().notNull(),
+	},
+	(table) => {
+		return {
+			// Indexes
+			idxUserId: index("idx_invoice_user_id").on(table.userId),
+			idxStatus: index("idx_invoice_status").on(table.status),
+			idxDueDate: index("idx_invoice_due_date").on(table.dueDate),
+			idxInvoiceNumber: index("idx_invoice_number").on(table.invoiceNumber),
+			idxPeriod: index("idx_invoice_period").on(table.periodStart, table.periodEnd),
+		};
+	},
+);
+
+// Invoice line items (individual charges on an invoice)
+export const invoiceLineItem = pgTable(
+	"invoice_line_items",
+	{
+		id: uuid().defaultRandom().primaryKey().notNull(),
+
+		// Invoice reference
+		invoiceId: uuid("invoice_id")
+			.notNull()
+			.references(() => invoice.id, { onDelete: "cascade" }),
+
+		// Line item details
+		description: text("description").notNull(), // e.g., "Platform fee for booking #123"
+		quantity: numeric("quantity", { precision: 19, scale: 4 }).default("1").notNull(),
+		unitPrice: numeric("unit_price", { precision: 19, scale: 4 }).notNull(),
+		amount: numeric("amount", { precision: 19, scale: 4 }).notNull(), // quantity * unitPrice
+
+		// Source reference (what triggered this charge)
+		sourceEntityType: text("source_entity_type"), // e.g., 'rental_booking', 'ride_request'
+		sourceEntityId: uuid("source_entity_id"), // UUID from originating product's DB
+
+		// Metadata
+		metadata: jsonb("metadata"),
+
+		// Timestamps
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => {
+		return {
+			// Indexes
+			idxInvoiceId: index("idx_line_item_invoice_id").on(table.invoiceId),
+			idxSourceEntity: index("idx_line_item_source_entity").on(table.sourceEntityId),
 		};
 	},
 );
